@@ -16,12 +16,13 @@
 #endif
 
 Font font(Shell::getSelfExecutableDir() + "font.png", -1, -1, false, 0.5f);
+Font bigfont(Shell::getSelfExecutableDir() + "font.png", -1, -1, false, 1.0f);
 
 inline double catenary(double x, double a) {
     return a * cosh(x / a);
 }
 
-double getAForWidth(double width, int height){
+double getAForWidth(double width, int height){  //Brute force solver
 	double a = 1.0;
 	double increaser = 0.1;
 	while(a < 100.0){
@@ -83,12 +84,18 @@ std::vector<std::pair<int, int> > getAllArches(const Image & testImage){
 }
 
 
-void fixVector(std::vector<std::pair<int, int> > & arches, double midPointOfArch){
+int getMidPointAtHeight(int y, double midPointOfArch_Bottom, double bottomOfArch, double slope){
+	const double diffY = static_cast<double>(y) - bottomOfArch;
+	const double adjustment = diffY * slope;
+	return static_cast<int>(midPointOfArch_Bottom + adjustment);
+}
+
+void fixVector(std::vector<std::pair<int, int> > & arches, double midPointOfArch, double bottomOfArch, double slope){
 	//Vector needs to go bath and forth
 	std::vector<std::pair<int, int> > left;
 	std::vector<std::pair<int, int> > right;
 	for(auto & p : arches){
-		if (p.first < midPointOfArch){
+		if (p.first < getMidPointAtHeight(p.second, midPointOfArch, bottomOfArch, slope)){
 			left.push_back(p);
 		} else {
 			right.push_back(p);
@@ -134,23 +141,31 @@ int showErrors(Image original, const std::string & output){
 	
 	//Figure out exactly how high the arch is and where the midpoint is
 	const double topOfArch = static_cast<double>(arches[arches.size() - 1].second + arches[arches.size() - 2].second) / 2.0;
-	const double midPointOfArch = static_cast<double>(arches[0].first + arches[1].first) / 2.0;
+	const double bottomOfArch = static_cast<double>(arches[0].second + arches[0].second) / 2.0;
+	const double midPointOfArch_Bottom = static_cast<double>(arches[0].first + arches[1].first) / 2.0;
+	const double midPointOfArch_Top = static_cast<double>(arches[arches.size() - 1].first + arches[arches.size() - 2].first) / 2.0;
 	DEBUG_PLOT_MSG("Top of arch: " << topOfArch);
-	DEBUG_PLOT_MSG("Midpoint of arch: " << midPointOfArch);
-	fixVector(arches, midPointOfArch);
+	DEBUG_PLOT_MSG("Bottom of arch: " << bottomOfArch);
+	DEBUG_PLOT_MSG("Midpoint of arch bottom: " << midPointOfArch_Bottom);
+	DEBUG_PLOT_MSG("Midpoint of arch top: " << midPointOfArch_Top);
+	const double deltaX = midPointOfArch_Top - midPointOfArch_Bottom;
+	const double deltaY = topOfArch - bottomOfArch;
+	const double slope = deltaX / deltaY;
+	fixVector(arches, midPointOfArch_Bottom, bottomOfArch, slope);
 	
-	copy.rect_fill_x2_and_y2(0, arches[0].second, arches[0].first, arches[2].second, Image::Color(255, 0, 255));
-	copy.rect_fill_x2_and_y2(copy.width(), arches[1].second, arches[1].first, arches[3].second, Image::Color(255, 0, 255));
+	copy.rect_fill_x2_and_y2(0, arches[0].second, arches[0].first, arches[0].second + 100, Image::Color(255, 0, 255));
+	copy.rect_fill_x2_and_y2(copy.width(), arches[1].second, arches[1].first, arches[1].second + 100, Image::Color(255, 0, 255));
 	
 	double errorTotal = 0;
 	int errorCount = 0;
 	
-	for(size_t i = 0; i < arches.size() - 4; ++i){	
+	for(size_t i = 0; i < arches.size() - 2; ++i){	
 		if (arches[i].first == 0 && arches[i].second == 0) continue; //Spaceholder
 		Image testImage = Image(original.width(), original.height(), Image::Color(255, 255, 255));
 		DEBUG_PLOT_MSG("Plotting " << arches[i].first << ", " << arches[i].second);
-		plot(arches[i], midPointOfArch, topOfArch, testImage, Image::Color(255, 0, 0));
-		plot(arches[i], midPointOfArch, topOfArch, original, Image::Color(255, 0, 0));
+		const int midForNextCorbel = getMidPointAtHeight(arches[i].second, midPointOfArch_Bottom, bottomOfArch, slope);
+		plot(arches[i], midForNextCorbel, topOfArch, testImage, Image::Color(255, 0, 0));
+		plot(arches[i], midForNextCorbel, topOfArch, original, Image::Color(255, 0, 0));
 
 		//Since the corbels will go back and forth, the next corbel is actually +2
 		int xSearch = arches[i + 2].first;
@@ -188,18 +203,18 @@ int showErrors(Image original, const std::string & output){
 			DEBUG_PLOT_MSG("Too shallow, Stress: " << stress);
 			color = Image::ColorBetween(Image::Color(255, 0, 255), Image::Color(0, 0, 255),  static_cast<float>(stress / 2.0));
 		}
-		int yPos = (i + 4 < arches.size()) ? arches[i + 4].second : static_cast<int>(topOfArch);
-		int xPos = (i + 4 < arches.size()) ? arches[i + 4].first : static_cast<int>(midPointOfArch);
+		int yPos = (i + 2 < arches.size()) ? arches[i + 2].second : static_cast<int>(topOfArch);
+		int xPos = (i + 2 < arches.size()) ? arches[i + 2].first : static_cast<int>(midForNextCorbel);
 		std::stringstream sss;
 		sss << static_cast<int>(stress * 100) << "%";
 		
 		errorTotal += stress;
 		++errorCount;
-		if (arches[i].first < midPointOfArch){
-			copy.rect_fill_x2_and_y2(xPos, arches[i + 2].second, 0, yPos, color);
+		if (arches[i].first < midForNextCorbel){
+			copy.rect_fill_x2_and_y2(xPos, arches[i].second, 0, yPos, color);
 			font.write(sss.str(), copy, 1, yPos);
 		} else {
-			copy.rect_fill_x2_and_y2(xPos, arches[i + 2].second, copy.width(), yPos, color);
+			copy.rect_fill_x2_and_y2(xPos, arches[i].second, copy.width(), yPos, color);
 			font.write(sss.str(), copy, copy.width() - 30, yPos);
 		}
 		
@@ -207,22 +222,38 @@ int showErrors(Image original, const std::string & output){
 		//break;
 	}
 	
+	//Draw the midpoint, see if it's leaning
+	for(int yy = static_cast<int>(bottomOfArch); yy >= static_cast<int>(topOfArch); --yy){
+		const int xx = getMidPointAtHeight(yy, midPointOfArch_Bottom, bottomOfArch, slope);
+		copy.pset(xx, yy, Image::Color(0, 0, 64));
+	}
 	
-	plot(arches[0], midPointOfArch, topOfArch, copy, Image::Color(255, 255, 0));
-	plot(arches[1], midPointOfArch, topOfArch, copy, Image::Color(255, 255, 0));
-	Image result = Image(original.width() * 2, original.height(), Image::Color(0,0,0));
-	result.put(copy, 0, 0);
-	result.put(original, original.width(), 0);
+	
+	plot(arches[0], midPointOfArch_Bottom, topOfArch, copy, Image::Color(255, 255, 0));
+	plot(arches[1], midPointOfArch_Bottom, topOfArch, copy, Image::Color(255, 255, 0));
+	Image result = Image(original.width() * 2, original.height() + 100, Image::Color(0,0,0));
+	result.put(copy, 0, 100);
+	result.put(original, original.width(), 100);
 	
 	std::stringstream sss;
 	const int ss = static_cast<int>((100.0f * errorTotal) / static_cast<double>(errorCount));
-	sss << "Average Stress: " << ss;
+	const int ssl = static_cast<int>(100.0f * slope);
+	sss << "Error: " << ss;
 	if (ss > 0){
 		sss << "% (Too shallow)" << std::endl;
-	} else {
+	} else if (ss < 0){
 		sss << "% (Too aggressive)" << std::endl;
+	} else {
+		sss << "% (Perfect)" << std::endl;
 	}
-	font.write(sss.str(), result, 0, 0);
+	if (ssl < 0){
+		sss << "Lean: " << -ssl << "% Right" << std::endl;
+	} else if (ssl > 0){
+		sss << "Lean: " << ssl << "% Left" << std::endl;
+	} else {
+		sss << "Lean: 0%" << std::endl;
+	}
+	bigfont.write(sss.str(), result, 0, 0);
 	
 	result.save(output);
 	return 0;
@@ -235,21 +266,42 @@ int main(int argc, char ** argv){
 		std::cerr << "No parameters specified" << std::endl;
 		return 255;
 	}
+	
+	std::vector<std::string> files;
 	for(int i = 1; i < argc; ++i){
 		std::string filename = argv[i];
-		std::string ext = Shell::fileExtension(filename);
-		if (ext == "png"){  //An image with green dots at the corbels
-			std::string dirname = filename.substr(0, filename.length() - (ext.length() + 1));
-			std::string output = dirname + "_stress.png";
-			int result = showErrors(Image(filename), output);
-			if (result) return result;
-		} else if (ext == "txt"){  //A text file: width, heigt left, height right, corbel left, corbel right...
-			std::cerr << "TXT file code not created: " << filename << std::endl;
-			return 255;
+		DEBUG_PLOT_MSG("Parameter " << i << ": " << filename);
+		if (std::filesystem::is_directory(filename)){
+			std::vector<std::string> thisfolder = Shell::getFilesInDir(filename, 0);
+			for(auto & f : thisfolder){
+				std::string ext = Shell::fileExtension(f);
+				if (ext == "png") files.push_back(Shell::windowizePaths(Shell::absolutePath(f)));		
+			}
 		} else {
-			std::cerr << "Not a PNG or TXT file: " << filename << std::endl;
-			return 255;
+			std::string ext = Shell::fileExtension(filename);
+			if (ext == "png"){  //An image with green dots at the corbels
+				files.push_back(Shell::absolutePath(filename));
+			} else {
+				std::cerr << "Not a PNG or Directory: " << filename << std::endl;
+			}
 		}
 	}
+	
+	
+	DEBUG_PLOT_MSG("Processing " << files.size() << " files");
+	for(auto & filename : files){
+		std::cout << "Processing " << filename << "..." << std::endl;
+		const std::string dirname = Shell::dirname(filename) + "Calculated";
+		Shell::mkdir(dirname);
+		const std::string output = Shell::windowizePaths(dirname + "\\" + Shell::filename(filename));
+		DEBUG_PLOT_MSG("Output: " << output);
+		int result = showErrors(Image(filename), output);
+		if (result){
+			std::cerr << "Error code " << result << std::endl;
+		} else {
+			std::cout << "Done" << std::endl;
+		}
+	}
+	
 	return 0;
 }
